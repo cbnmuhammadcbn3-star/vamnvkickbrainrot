@@ -1,0 +1,492 @@
+-- KICK A BRAINROT - ULTIMATE AUTO FARM
+-- Author: mizu verse
+-- Version: 2.0 (Aggressive Mode)
+-- Fitur: Auto Kick | Auto Sell | Auto Collect Coin
+
+-- ========== [ SETTINGS ] ==========
+local Settings = {
+    AutoKick = true,
+    AutoSell = true,
+    AutoCollect = true,
+    AggressiveMode = true,      -- Mode lebih agresif dalam mengejar target
+    KickRange = 35,              -- Jarak tendang (studs)
+    SellRange = 60,              -- Jarak jual
+    CollectRange = 50,           -- Jarak koin
+    KickCooldown = 0.08,         -- Kecepatan tendang (detik)
+    WalkSpeedBoost = 28,         -- Kecepatan jalan
+    JumpPowerBoost = 70          -- Loncat lebih tinggi
+}
+
+-- ========== [ SERVICES ] ==========
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
+
+-- ========== [ VARIABLES ] ==========
+local character = nil
+local humanoid = nil
+local rootPart = nil
+local lastKickTime = 0
+local currentTarget = nil
+local isRunning = true
+
+-- ========== [ FUNCTIONS ] ==========
+local function updateChar()
+    character = LocalPlayer.Character
+    if character then
+        humanoid = character:FindFirstChild("Humanoid")
+        rootPart = character:FindFirstChild("HumanoidRootPart")
+        if humanoid and Settings.WalkSpeedBoost then
+            humanoid.WalkSpeed = Settings.WalkSpeedBoost
+            humanoid.JumpPower = Settings.JumpPowerBoost
+        end
+    end
+end
+
+-- Cari enemy terdekat (Brainrot)
+local function getNearestEnemy()
+    local closest = nil
+    local minDist = Settings.KickRange
+    
+    if not rootPart then return nil end
+    
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model") and obj ~= character then
+            local hum = obj:FindFirstChild("Humanoid")
+            local humRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
+            
+            if hum and hum.Health > 0 and humRoot then
+                local nama = obj.Name:lower()
+                if nama:find("brainrot") or nama:find("enemy") or nama:find("bot") or nama:find("zombie") or nama:find("monster") then
+                    local dist = (rootPart.Position - humRoot.Position).Magnitude
+                    if dist < minDist then
+                        closest = obj
+                        minDist = dist
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+-- Auto Kick (Agresif)
+local function doKick()
+    if not Settings.AutoKick then return end
+    if not character or not humanoid or not rootPart then updateChar() return end
+    
+    local target = getNearestEnemy()
+    currentTarget = target
+    
+    if target then
+        local targetRoot = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Torso")
+        if targetRoot then
+            local dist = (rootPart.Position - targetRoot.Position).Magnitude
+            local now = tick()
+            
+            -- Mode agresif: gerak terus ke target
+            if Settings.AggressiveMode and dist > 10 then
+                humanoid:MoveTo(targetRoot.Position)
+            end
+            
+            -- Kick jika dalam jangkauan
+            if dist <= Settings.KickRange and now - lastKickTime >= Settings.KickCooldown then
+                -- Coba berbagai method kick
+                local kicked = false
+                
+                -- Method 1: Remote event
+                local kickRemote = ReplicatedStorage:FindFirstChild("KickEvent") or 
+                                  ReplicatedStorage:FindFirstChild("Attack") or
+                                  ReplicatedStorage:FindFirstChild("Damage")
+                if kickRemote then
+                    kickRemote:FireServer(target)
+                    kicked = true
+                end
+                
+                -- Method 2: Click pada target
+                if not kicked and targetRoot then
+                    local camera = Workspace.CurrentCamera
+                    local vec, onScreen = camera:WorldToViewportPoint(targetRoot.Position)
+                    if onScreen then
+                        local mouse = LocalPlayer:GetMouse()
+                        if mouse then
+                            mouse.Target = target
+                            mouse1click()
+                            kicked = true
+                        end
+                    end
+                end
+                
+                -- Method 3: Kirim sinyal ke player (remotes)
+                if not kicked then
+                    for _, remote in pairs(ReplicatedStorage:GetChildren()) do
+                        if remote:IsA("RemoteEvent") and (remote.Name:lower():find("kick") or remote.Name:lower():find("attack")) then
+                            pcall(function() remote:FireServer(target) end)
+                        end
+                    end
+                end
+                
+                lastKickTime = now
+            end
+        end
+    end
+end
+
+-- Auto Sell (Cari area jual)
+local function doSell()
+    if not Settings.AutoSell then return end
+    if not rootPart then updateChar() return end
+    
+    local sellZone = nil
+    local sellPos = nil
+    
+    -- Cari area jual berdasarkan nama
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("Part") or obj:IsA("Model") then
+            local nama = obj.Name:lower()
+            if nama:find("sell") or nama:find("shop") or nama:find("trader") or nama:find("merchant") or nama:find("cashier") then
+                sellZone = obj
+                break
+            end
+        end
+    end
+    
+    -- Cari berdasarkan warna (merah/kuning untuk sell)
+    if not sellZone then
+        for _, part in pairs(Workspace:GetDescendants()) do
+            if part:IsA("Part") and (part.BrickColor == BrickColor.new("Bright red") or part.BrickColor == BrickColor.new("Bright yellow")) then
+                sellZone = part
+                break
+            end
+        end
+    end
+    
+    if sellZone then
+        if sellZone:IsA("Part") then
+            sellPos = sellZone.Position
+        elseif sellZone:FindFirstChild("HumanoidRootPart") then
+            sellPos = sellZone.HumanoidRootPart.Position
+        elseif sellZone:FindFirstChild("Part") then
+            sellPos = sellZone.Part.Position
+        end
+        
+        if sellPos then
+            local dist = (rootPart.Position - sellPos).Magnitude
+            if dist <= Settings.SellRange then
+                -- Trigger sell
+                local sold = false
+                
+                -- Cari tombol GUI
+                local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+                if playerGui then
+                    for _, gui in pairs(playerGui:GetChildren()) do
+                        local button = gui:FindFirstChild("SellButton") or gui:FindFirstChild("Button")
+                        if button and button:IsA("TextButton") then
+                            button:Fire()
+                            sold = true
+                        end
+                    end
+                end
+                
+                -- Cari remote sell
+                if not sold then
+                    local sellRemote = ReplicatedStorage:FindFirstChild("SellEvent") or 
+                                      ReplicatedStorage:FindFirstChild("SellItem")
+                    if sellRemote then
+                        sellRemote:FireServer()
+                        sold = true
+                    end
+                end
+                
+                -- Simulasi klik
+                if not sold then
+                    local mouse = LocalPlayer:GetMouse()
+                    if mouse then
+                        mouse1click()
+                    end
+                end
+            else
+                -- Gerak ke sell zone
+                humanoid:MoveTo(sellPos)
+            end
+        end
+    end
+end
+
+-- Auto Collect Coin
+local function doCollect()
+    if not Settings.AutoCollect then return end
+    if not rootPart then updateChar() return end
+    
+    local closestCoin = nil
+    local minDist = Settings.CollectRange
+    
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.ClassName ~= "Terrain" then
+            local nama = obj.Name:lower()
+            local material = obj.Material
+            local color = obj.Color
+            
+            -- Deteksi koin
+            if nama:find("coin") or nama:find("money") or nama:find("cash") or nama:find("gem") or nama:find("token") or
+               (color and (color.r > 0.8 and color.g > 0.7 and color.b < 0.3)) or
+               (material and material.Name == "Neon") then
+               
+                local dist = (rootPart.Position - obj.Position).Magnitude
+                if dist < minDist then
+                    closestCoin = obj
+                    minDist = dist
+                end
+            end
+        end
+    end
+    
+    if closestCoin then
+        local dist = (rootPart.Position - closestCoin.Position).Magnitude
+        if dist <= 5 then
+            -- collect koin
+            local collected = false
+            
+            local collectRemote = ReplicatedStorage:FindFirstChild("CollectCoin") or 
+                                 ReplicatedStorage:FindFirstChild("Pickup")
+            if collectRemote then
+                collectRemote:FireServer(closestCoin)
+                collected = true
+            end
+            
+            if not collected then
+                humanoid:MoveTo(closestCoin.Position)
+            end
+        else
+            humanoid:MoveTo(closestCoin.Position)
+        end
+    end
+end
+
+-- ========== [ GUI MODERN ] ==========
+local function createModernGUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "BrainrotHub"
+    screenGui.Parent = game:GetService("CoreGui")
+    screenGui.ResetOnSpawn = false
+    
+    -- Main container
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(0, 280, 0, 360)
+    container.Position = UDim2.new(0.82, 0, 0.05, 0)
+    container.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+    container.BackgroundTransparency = 0.08
+    container.BorderSizePixel = 0
+    container.Parent = screenGui
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 16)
+    corner.Parent = container
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 60, 100)
+    stroke.Thickness = 1.5
+    stroke.Parent = container
+    
+    -- Header dengan gradien
+    local header = Instance.new("Frame")
+    header.Size = UDim2.new(1, 0, 0, 45)
+    header.BackgroundColor3 = Color3.fromRGB(255, 60, 100)
+    header.BackgroundTransparency = 0.25
+    header.Parent = container
+    
+    local headerCorner = Instance.new("UICorner")
+    headerCorner.CornerRadius = UDim.new(0, 16)
+    headerCorner.Parent = header
+    
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 1, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "⚡ KICK A BRAINROT ⚡"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextScaled = true
+    title.Font = Enum.Font.GothamBold
+    title.Parent = header
+    
+    local subtitle = Instance.new("TextLabel")
+    subtitle.Size = UDim2.new(1, 0, 0, 20)
+    subtitle.Position = UDim2.new(0, 0, 1, -5)
+    subtitle.BackgroundTransparency = 1
+    subtitle.Text = "mizu verse | Aggressive Mode"
+    subtitle.TextColor3 = Color3.fromRGB(200, 200, 200)
+    subtitle.TextSize = 11
+    subtitle.Font = Enum.Font.Gotham
+    subtitle.Parent = header
+    
+    -- Buttons
+    local yOffset = 60
+    local btnHeight = 45
+    local btnWidth = 240
+    
+    local kickBtn = Instance.new("TextButton")
+    kickBtn.Size = UDim2.new(0, btnWidth, 0, btnHeight)
+    kickBtn.Position = UDim2.new(0.5, -btnWidth/2, 0, yOffset)
+    kickBtn.BackgroundColor3 = Color3.fromRGB(255, 70, 90)
+    kickBtn.Text = "👢 AUTO KICK : ON"
+    kickBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    kickBtn.Font = Enum.Font.GothamBold
+    kickBtn.TextSize = 16
+    kickBtn.Parent = container
+    
+    local kickCorner = Instance.new("UICorner")
+    kickCorner.CornerRadius = UDim.new(0, 10)
+    kickCorner.Parent = kickBtn
+    
+    yOffset = yOffset + btnHeight + 10
+    
+    local sellBtn = Instance.new("TextButton")
+    sellBtn.Size = UDim2.new(0, btnWidth, 0, btnHeight)
+    sellBtn.Position = UDim2.new(0.5, -btnWidth/2, 0, yOffset)
+    sellBtn.BackgroundColor3 = Color3.fromRGB(255, 170, 50)
+    sellBtn.Text = "💰 AUTO SELL : ON"
+    sellBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    sellBtn.Font = Enum.Font.GothamBold
+    sellBtn.TextSize = 16
+    sellBtn.Parent = container
+    
+    local sellCorner = Instance.new("UICorner")
+    sellCorner.CornerRadius = UDim.new(0, 10)
+    sellCorner.Parent = sellBtn
+    
+    yOffset = yOffset + btnHeight + 10
+    
+    local collectBtn = Instance.new("TextButton")
+    collectBtn.Size = UDim2.new(0, btnWidth, 0, btnHeight)
+    collectBtn.Position = UDim2.new(0.5, -btnWidth/2, 0, yOffset)
+    collectBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 100)
+    collectBtn.Text = "🪙 AUTO COLLECT : ON"
+    collectBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    collectBtn.Font = Enum.Font.GothamBold
+    collectBtn.TextSize = 16
+    collectBtn.Parent = container
+    
+    local collectCorner = Instance.new("UICorner")
+    collectCorner.CornerRadius = UDim.new(0, 10)
+    collectCorner.Parent = collectBtn
+    
+    -- Status panel
+    yOffset = yOffset + btnHeight + 15
+    
+    local statusFrame = Instance.new("Frame")
+    statusFrame.Size = UDim2.new(0, btnWidth, 0, 70)
+    statusFrame.Position = UDim2.new(0.5, -btnWidth/2, 0, yOffset)
+    statusFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    statusFrame.BackgroundTransparency = 0.5
+    statusFrame.Parent = container
+    
+    local statusCorner = Instance.new("UICorner")
+    statusCorner.CornerRadius = UDim.new(0, 10)
+    statusCorner.Parent = statusFrame
+    
+    local statusText = Instance.new("TextLabel")
+    statusText.Size = UDim2.new(1, 0, 1, 0)
+    statusText.BackgroundTransparency = 1
+    statusText.Text = "🎯 Target: None\n💪 Status: Scanning..."
+    statusText.TextColor3 = Color3.fromRGB(150, 255, 150)
+    statusText.TextSize = 12
+    statusText.Font = Enum.Font.Gotham
+    statusText.TextWrapped = true
+    statusText.Parent = statusFrame
+    
+    -- Toggle functions
+    kickBtn.MouseButton1Click:Connect(function()
+        Settings.AutoKick = not Settings.AutoKick
+        kickBtn.Text = Settings.AutoKick and "👢 AUTO KICK : ON" or "👢 AUTO KICK : OFF"
+        kickBtn.BackgroundColor3 = Settings.AutoKick and Color3.fromRGB(255, 70, 90) or Color3.fromRGB(80, 80, 90)
+    end)
+    
+    sellBtn.MouseButton1Click:Connect(function()
+        Settings.AutoSell = not Settings.AutoSell
+        sellBtn.Text = Settings.AutoSell and "💰 AUTO SELL : ON" or "💰 AUTO SELL : OFF"
+        sellBtn.BackgroundColor3 = Settings.AutoSell and Color3.fromRGB(255, 170, 50) or Color3.fromRGB(80, 80, 90)
+    end)
+    
+    collectBtn.MouseButton1Click:Connect(function()
+        Settings.AutoCollect = not Settings.AutoCollect
+        collectBtn.Text = Settings.AutoCollect and "🪙 AUTO COLLECT : ON" or "🪙 AUTO COLLECT : OFF"
+        collectBtn.BackgroundColor3 = Settings.AutoCollect and Color3.fromRGB(50, 200, 100) or Color3.fromRGB(80, 80, 90)
+    end)
+    
+    -- Drag
+    local drag = false
+    local dragStart, startPos
+    
+    container.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            drag = true
+            dragStart = input.Position
+            startPos = container.Position
+        end
+    end)
+    
+    container.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            drag = false
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if drag and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStart
+            container.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    
+    -- Update status loop
+    RunService.RenderStepped:Connect(function()
+        if currentTarget then
+            local targetName = currentTarget.Name
+            if #targetName > 20 then targetName = targetName:sub(1, 17).."..." end
+            statusText.Text = "🎯 Target: " .. targetName .. "\n⚡ Mode: Aggressive\n👢 Kick Ready"
+            statusText.TextColor3 = Color3.fromRGB(255, 100, 100)
+        else
+            statusText.Text = "🎯 Target: None\n🔍 Searching brainrot...\n✅ All systems ready"
+            statusText.TextColor3 = Color3.fromRGB(150, 255, 150)
+        end
+    end)
+    
+    return statusText
+end
+
+-- ========== [ INIT & MAIN LOOP ] ==========
+local function init()
+    updateChar()
+    createModernGUI()
+    
+    print("═══════════════════════════════")
+    print("⚡ KICK A BRAINROT ULTIMATE v2.0")
+    print("📛 Author: mizu verse")
+    print("🎮 Fitur: Auto Kick | Auto Sell | Auto Collect")
+    print("🔥 Mode: Aggressive")
+    print("═══════════════════════════════")
+end
+
+-- Event listeners
+LocalPlayer.CharacterAdded:Connect(function()
+    wait(0.5)
+    updateChar()
+end)
+
+-- Main loop
+RunService.RenderStepped:Connect(function()
+    if not isRunning then return end
+    updateChar()
+    
+    if character and humanoid and rootPart and humanoid.Health > 0 then
+        doKick()
+        doSell()
+        doCollect()
+    end
+end)
+
+-- Start
+init()
